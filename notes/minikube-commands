@@ -1,0 +1,342 @@
+minikube docker-env
+eval $(minikube docker-env)
+
+minikube ssh
+
+###Confirm that kubectl is also pointing to the Minikube VM
+kubectl config current-context
+
+kubectl get all --all-namespaces
+
+minikube start --vm-driver=virtualbox
+minikube stop
+minikube delete
+
+###Specifying the Kubernetes Version
+
+minikube start \
+    --vm-driver=virtualbox \
+    --kubernetes-version="v1.14.0"
+    
+
+#Getting Started with Pods
+With Kubernetes, the smallest unit is a Pod.
+A Pod is a way to represent a running process in a cluster.
+
+###Create pod
+kubectl run db --image mongo
+kubectl create -f pod/db.yml
+
+###Delete pod
+kubectl delete pod db
+kubectl delete -f pod/db.yml
+
+### Get more info about pods
+kubectl get pods -o wide
+kubectl describe pod db
+kubectl describe -f pod/db.yml
+
+### How pod scheduling works?
+- API Server (master node)
+- Scheduler (master node)
+- Kubelet (run on each node)
+
+1. Kubernetes client (kubectl) sent a request to the API server requesting creation of a Pod defined in the pod/db.yml file.
+
+2. Since the scheduler is watching the API server for new events, it detected that there is an unassigned Pod.
+
+3. The scheduler decided which node to assign the Pod to and sent that information to the API server.
+
+4. Kubelet is also watching the API server. It detected that the Pod was assigned to the node it is running on.
+
+5. Kubelet sent a request to Docker requesting the creation of the containers that form the Pod. In our case, the Pod defines a single container based on the mongo image.
+
+6. Finally, Kubelet sent a request to the API server notifying it that the Pod was created successfully.
+
+![alt process](5716507227062272.png "Process")
+
+
+### Executing a new process
+kubectl exec db ps aux
+kubectl exec db --container db ps aux
+kubectl exec -it db sh
+
+### Getting Logs
+kubectl logs db
+Follow the log in realtime
+kubectl logs -f db
+
+## Anatomy of a Pod
+- Pods are designed to run multiple cooperative processes that should act as a cohesive unit. Those processes are wrapped in containers.
+
+- All the containers that form a Pod are running on the same machine. A Pod cannot be split across multiple nodes.
+
+- All the processes (containers) inside a Pod share the same set of resources, and they can communicate with each other through localhost. One of those shared resources is storage.
+
+- A volume (think of it as a directory with shareable data) defined in a Pod can be accessed by all the containers thus allowing them all to share the same data.
+
+
+## Formatting the Ouput
+kubectl get -f pod/go-demo-2.yml -o jsonpath="{.spec.containers[*].name}"
+
+
+## Multi-container Pods
+A frequent use case is multi-container Pods used for:
+
+Continuous integration (CI)
+Continious Delivery (CD)
+Continuous Deployment processes (CDP)
+
+
+## Liveness Probe
+livenessProbe can be used to confirm whether a container should be running. If the probe fails, Kubernetes will kill the container and apply restart policy which defaults to Always.
+
+    livenessProbe:
+      httpGet:
+        path: /this/path/does/not/exist
+        port: 8080
+      initialDelaySeconds: 5
+      timeoutSeconds: 2 # Defaults to 1
+      periodSeconds: 5 # Defaults to 10
+      failureThreshold: 1 # Defaults to 3
+      
+We declared that the first execution of the probe should be delayed by five seconds (initialDelaySeconds), that requests should timeout after two seconds (timeoutSeconds), that the process should be repeated every five seconds (periodSeconds), and (failureThreshold) define how many attempts it must try before giving up 
+
+
+Do not create Pods by themselves. Let one of the controllers create Pods for you.
+
+
+# ReplicaSets (Controller)
+
+## Understanding ReplicaSets
+Most applications should be scalable and all must be fault tolerant. Pods do not provide those features, ReplicaSets do.
+ReplicaSet’s primary function is to ensure that the specified number of replicas of a service are (almost) always running.
+
+If you’re familiar with Replication Controllers, it is worth mentioning that ReplicaSet is the next-generation ReplicationController(deprecated). The only significant difference is that ReplicaSet has extended support for selectors.
+
+kubectl get rs
+kubectl get pods --show-labels
+
+kubectl create -f rs/go-demo-2.yml
+
+Sequential Breakdown of the Process #
+The sequence of events that transpired with the kubectl create -f rs/go-demo-2.yml command is as follows.
+
+Kubernetes client (kubectl) sent a request to the API server requesting the creation of a ReplicaSet defined in the rs/go-demo-2.yml file.
+
+The controller is watching the API server for new events, and it detected that there is a new ReplicaSet object.
+
+The controller creates two new pod definitions because we have configured replica value as 2 in rs/go-demo-2.yml file.
+
+Since the scheduler is watching the API server for new events, it detected that there are two unassigned Pods.
+
+The scheduler decided which node to assign the Pod and sent that information to the API server.
+
+Kubelet is also watching the API server. It detected that the two Pods were assigned to the node it is running on.
+
+Kubelet sent requests to Docker requesting the creation of the containers that form the Pod. In our case, the Pod defines two containers based on the mongo and api image. So in total four containers are created.
+
+Finally, Kubelet sent a request to the API server notifying it that the Pods were created successfully.
+
+### Deleting ReplicaSets
+kubectl delete -f rs/go-demo-2.yml
+
+Only delete replicasets without delete pods
+kubectl delete -f rs/go-demo-2.yml --cascade=false
+
+### Re-using the Same Pods 
+
+kubectl create -f rs/go-demo-2.yml --save-config
+kubectl apply -f rs/go-demo-2-scaled.yml
+
+We could have created the ReplicaSet with apply in the first place, but we didn’t. The apply command automatically saves the configuration so that we can edit it later on. The create command does not do such thing by default so we had to save it with --save-config.
+
+### Destroying a Pod
+POD_NAME=$(kubectl get pods -o name \
+   | tail -1)
+kubectl delete $POD_NAME
+
+### Removing a label 
+
+POD_NAME=$(kubectl get pods -o name \
+    | tail -1)
+kubectl label $POD_NAME service-
+kubectl describe $POD_NAME
+
+Please note - at the end of the name of the label. It is the syntax that indicates that a label should be removed.
+
+
+### Re-adding the Label
+kubectl label $POD_NAME service=go-demo-2
+
+
+
+
+# Services
+Kubernetes Services provide addresses through which associated Pods can be accessed.
+## Creating Services by Exposing Ports
+###Exposing a Resource
+kubectl expose rs go-demo-2 \
+    --name=go-demo-2-svc \
+    --target-port=28017 \
+    --type=NodePort
+    
+Line 1: We specified that we want to expose a ReplicaSet (rs).
+
+Line 2: The name of the new Service should be go-demo-2-svc.
+
+Line 3: The port that should be exposed is 28017 (the port MongoDB interface is listening to).
+
+Line 4: we specified that the type of the Service should be NodePort.
+
+### Types of Services
+There are other Service types we could have used to establish communication:
+- NodePort
+- ClusterIP: ClusterIP (the default type) exposes the port only inside the cluster. Such a port would not be accessible from anywhere outside. ClusterIP is useful when we want to enable communication between Pods and still prevent any external access.
+If NodePort is used, ClusterIP will be created automatically.
+- LoadBalancer: The LoadBalancer type is only useful when combined with cloud provider’s load balancer.
+- ExternalName: ExternalName maps a service to an external address (e.g., kubernetes.io).
+
+### Sequential Breakdown of the Process
+The processes that were initiated with the creation of the Service are as follows:
+
+Kubernetes client (kubectl) sent a request to the API server requesting the creation of the Service based on Pods created through the go-demo-2 ReplicaSet.
+
+Endpoint controller is watching the API server for new service events. It detected that there is a new Service object.
+
+Endpoint controller created endpoint objects with the same name as the Service, and it used Service selector to identify endpoints (in this case the IP and the port of go-demo-2 Pods).
+
+kube-proxy is watching for service and endpoint objects. It detected that there is a new Service and a new endpoint object.
+
+kube-proxy added iptables rules which capture traffic to the Service port and redirect it to endpoints. For each endpoint object, it adds iptables rule which selects a Pod.
+
+The kube-dns add-on is watching for Service. It detected that there is a new service.
+
+The kube-dns added db's record to the dns server (skydns).
+
+kubectl describe svc go-demo-2-svc
+
+Name:                    go-demo-2-svc
+Namespace:               default
+Labels:                  db=mongo
+                         language=go
+                         service=go-demo-2
+                         type=backend
+Annotations:             <none>
+Selector:                service=go-demo-2,type=backend
+Type:                    NodePort
+IP:                      10.0.0.194
+Port:                    <unset>  28017/TCP
+TargetPort:              28017/TCP
+NodePort:                 <unset>  31879/TCP
+Endpoints:               172.17.0.4:28017,172.17.0.5:28017
+Session Affinity:        None
+External Traffic Policy: Cluster
+Events:                  <none>
+
+
+Line 1-2: We can see the name and the namespace. We did not yet explore namespaces (coming up later) and, since we didn’t specify any, it is set to default.
+
+Line 3-6: Since the Service is associated with the Pods created through the ReplicaSet, it inherited all their labels. The selector matches the one from the ReplicaSet. The Service is not directly associated with the ReplicaSet (or any other controller) but with Pods through matching labels.
+
+Line 9-13: Next is the NodePort type which exposes ports to all the nodes. Since NodePort automatically created ClusterIP type as well, all the Pods in the cluster can access the TargetPort. The Port is set to 28017. That is the port that the Pods can use to access the Service. Since we did not specify it explicitly when we executed the command, its value is the same as the value of the TargetPort, which is the port of the associated Pod that will receive all the requests. NodePort was generated automatically since we did not set it explicitly. It is the port which we can use to access the Service and, therefore, the Pods from outside the cluster. In most cases, it should be randomly generated, that way we avoid any clashes.
+
+
+PORT=$(kubectl get svc go-demo-2-svc \
+    -o jsonpath="{.spec.ports[0].nodePort}")
+IP=$(minikube ip)
+echo "http://$IP:$PORT"
+
+
+kubectl delete svc go-demo-2-svc
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: go-demo-2
+spec:
+  type: NodePort
+  ports:
+  - port: 28017
+    nodePort: 30001
+    protocol: TCP
+  selector:
+    type: backend
+    service: go-demo-2
+    
+Line 1-4: You should be familiar with the meaning of apiVersion, kind, and metadata, so we’ll jump straight into the spec section.
+
+Line 5: Since we already explored some of the options through the kubectl expose command, the spec should be relatively easy to grasp.
+
+Line 6: The type of the Service is set to NodePort meaning that the ports will be available both within the cluster as well as from outside by sending requests to any of the nodes.
+
+Line 7-10: The ports section specifies that the requests should be forwarded to the Pods on port 28017. The nodePort is new. Instead of letting the service expose a random port, we set it to the explicit value of 30001. Even though, in most cases, that is not a good practice, I thought it might be a good idea to demonstrate that option as well. The protocol is set to TCP. The only other alternative would be to use UDP. We could have skipped the protocol altogether since TCP is the default value but, sometimes, it is a good idea to leave things as a reminder of an option.
+
+Line 11-13: The selector is used by the Service to know which Pods should receive requests. It works in the same way as ReplicaSet selectors. In this case, we defined that the service should forward requests to Pods with labels type set to backend and service set to go-demo. Those two labels are set in the Pods spec of the ReplicaSet.
+
+kubectl create -f svc/go-demo-2-svc.yml
+kubectl get -f svc/go-demo-2-svc.yml
+
+Let’s take a look at the endpoint. It holds the list of Pods that should receive requests.
+
+kubectl get ep go-demo-2 -o yaml
+
+
+## ClusterIP
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: go-demo-2-db
+spec:
+  ports:
+  - port: 27017
+  selector:
+    type: db
+    service: go-demo-2
+    
+    
+This Service definition does not contain anything new.
+
+- There is no type, so it’ll default to ClusterIP.
+- Since there is no reason for anyone outside the cluster to communicate with the database, there’s no need to expose it using the NodePort type.
+- We also skipped specifying the NodePort, since only internal communication within the cluster is allowed.
+- The same is true for the protocol. TCP is all we need, and it happens to be the default one.
+- Finally, the selector labels are the same as the labels that define the Pod.
+    
+### The readinessProbe
+The readinessProbe should be used as an indication that the service is ready to serve requests. When combined with Services construct, only containers with the readinessProbe state set to Success will receive requests.
+
+readinessProbe:
+          httpGet:
+            path: /demo/hello
+            port: 8080
+          periodSeconds: 1
+        livenessProbe:
+          httpGet:
+            path: /demo/hello
+            port: 8080
+
+While livenessProbe is used to determine whether a Pod is alive or it should be replaced by a new one, the readinessProbe is used by the iptables. A Pod that does not pass the readinessProbe will be excluded and will not receive requests. In theory, requests might be still sent to a faulty Pod, between two iterations. Still, such requests will be small in number since the iptables will change as soon as the next probe responds with HTTP code less than 200, or equal or greater than 400.
+
+
+### Defining Multiple Objects In The Same YAML file
+
+Combine multiple YAML fiel to one with (---)
+
+apiVersion: apps/v1
+kind: ReplicaSet
+
+---
+
+apiVersion: v1
+kind: Service
+
+## Discovering Services process
+Services can be discovered through two principal modes:
+
+- Environment variables
+- DNS
+
+
+
